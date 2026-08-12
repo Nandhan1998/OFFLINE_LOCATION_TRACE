@@ -256,6 +256,14 @@
     padding-top:12px;
   }
   .note b{color:var(--text);}
+  .note.warn{
+    border-top-color:var(--alert);
+    color:var(--text);
+    background:rgba(193,69,58,0.08);
+    padding:12px;
+    border-radius:4px;
+  }
+  .note.warn b{color:var(--alert);}
 </style>
 </head>
 <body>
@@ -265,6 +273,8 @@
     <h1>Back<span>trail</span></h1>
     <div class="gps-badge"><div id="gpsDot" class="dot"></div><span id="gpsLabel">no fix</span></div>
   </header>
+
+  <div id="offlineBadge" style="display:none; font-size:11px; text-align:center; padding:6px; border-radius:4px; margin-bottom:12px; font-family:ui-monospace,monospace; letter-spacing:0.04em;"></div>
 
   <div class="map-frame">
     <canvas id="mapCanvas"></canvas>
@@ -316,6 +326,8 @@
   const waypointLbl = document.getElementById('waypointLbl');
   const canvas = document.getElementById('mapCanvas');
   const ctx = canvas.getContext('2d');
+  const noteBox = document.getElementById('noteBox');
+  const offlineBadge = document.getElementById('offlineBadge');
 
   let watchId = null;
   let trail = [];          // {lat, lon, t, acc}
@@ -366,13 +378,32 @@
     statPoints.textContent = trail.length;
   }
 
+  let poorSignalSince = null;
+
   function onPosition(pos){
     const {latitude, longitude, accuracy} = pos.coords;
     currentPos = {lat: latitude, lon: longitude, acc: accuracy};
     statAcc.textContent = Math.round(accuracy)+' m';
-    setGpsStatus(accuracy <= 20 ? 'good pulse' : 'bad pulse', accuracy<=20?'locked':'weak fix');
 
-    if(tracking){
+    const MAX_RECORD_ACCURACY = 20; // don't trust/record fixes worse than this
+    if(accuracy <= 10){
+      setGpsStatus('good pulse', 'locked');
+      poorSignalSince = null;
+      noteBox.classList.remove('warn');
+    } else if(accuracy <= MAX_RECORD_ACCURACY){
+      setGpsStatus('good pulse', 'ok (' + Math.round(accuracy) + 'm)');
+      poorSignalSince = null;
+      noteBox.classList.remove('warn');
+    } else {
+      setGpsStatus('bad pulse', 'improving signal…');
+      if(poorSignalSince === null) poorSignalSince = Date.now();
+      if(Date.now() - poorSignalSince > 15000){
+        noteBox.classList.add('warn');
+        noteBox.innerHTML = '<b>Still no good fix (' + Math.round(accuracy) + 'm).</b> This usually means: you\'re indoors/under heavy cover, or your phone\'s location mode is set to "Battery saving" instead of GPS/High accuracy. Check Settings → Location on your phone, and move to open sky.';
+      }
+    }
+
+    if(tracking && accuracy <= MAX_RECORD_ACCURACY){
       const last = trail[trail.length-1];
       if(!last){
         trail.push({lat: latitude, lon: longitude, t: Date.now(), acc: accuracy});
@@ -567,26 +598,50 @@
   startWatch();
 
   // Cache this page itself so it opens with zero connection next time.
+  function showOfflineBadge(state){
+    offlineBadge.style.display = 'block';
+    if(state === 'ready'){
+      offlineBadge.textContent = '✓ Offline ready — safe to disconnect';
+      offlineBadge.style.background = 'rgba(127,176,105,0.12)';
+      offlineBadge.style.color = '#7FB069';
+      offlineBadge.style.border = '1px solid #7FB069';
+    } else if(state === 'checking'){
+      offlineBadge.textContent = 'Preparing offline cache…';
+      offlineBadge.style.background = 'rgba(147,161,134,0.1)';
+      offlineBadge.style.color = 'var(--text-muted)';
+      offlineBadge.style.border = '1px solid var(--line)';
+    } else {
+      offlineBadge.textContent = '✗ Not cached yet — stay online and reload once more';
+      offlineBadge.style.background = 'rgba(193,69,58,0.1)';
+      offlineBadge.style.color = 'var(--alert)';
+      offlineBadge.style.border = '1px solid var(--alert)';
+    }
+  }
+
+  function checkOfflineReady(){
+    if(!navigator.serviceWorker.controller){
+      showOfflineBadge('checking');
+      return;
+    }
+    const channel = new MessageChannel();
+    channel.port1.onmessage = e => {
+      if(e.data && e.data.type === 'READY_STATUS'){
+        showOfflineBadge(e.data.ready ? 'ready' : 'notready');
+      }
+    };
+    navigator.serviceWorker.controller.postMessage('CHECK_READY', [channel.port2]);
+  }
+
   if('serviceWorker' in navigator){
-    const swCode = `
-      self.addEventListener('install', e => self.skipWaiting());
-      self.addEventListener('activate', e => self.clients.claim());
-      self.addEventListener('fetch', e => {
-        e.respondWith(
-          caches.open('backtrail-v1').then(cache =>
-            cache.match(e.request).then(cached => {
-              const fetchPromise = fetch(e.request).then(res => {
-                cache.put(e.request, res.clone());
-                return res;
-              }).catch(() => cached);
-              return cached || fetchPromise;
-            })
-          )
-        );
-      });
-    `;
-    const blob = new Blob([swCode], {type:'application/javascript'});
-    navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+    showOfflineBadge('checking');
+    navigator.serviceWorker.register('./sw.js').then(() => {
+      navigator.serviceWorker.ready.then(checkOfflineReady);
+    }).catch(() => showOfflineBadge('notready'));
+    navigator.serviceWorker.addEventListener('controllerchange', checkOfflineReady);
+    setTimeout(checkOfflineReady, 3000);
+  } else {
+    offlineBadge.style.display = 'block';
+    offlineBadge.textContent = 'This browser doesn\'t support offline mode';
   }
 })();
 </script>
