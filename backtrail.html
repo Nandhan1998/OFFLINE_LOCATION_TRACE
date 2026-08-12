@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Backtrail — Find Your Way Back</title>
+<style>
+  :root{
+    --bg-deep:#12170F;
+    --bg-panel:#1B2317;
+    --bg-panel-2:#212B1C;
+    --line:#33402A;
+    --text:#EDE8D8;
+    --text-muted:#93A186;
+    --blaze:#E2A33D;
+    --blaze-dim:#8A6A2E;
+    --alert:#C1453A;
+    --signal-good:#7FB069;
+    --signal-bad:#C1453A;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg-deep);
+    background-image:
+      radial-gradient(circle at 20% 10%, rgba(127,176,105,0.06), transparent 40%),
+      radial-gradient(circle at 90% 80%, rgba(226,163,61,0.05), transparent 45%);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    min-height:100vh;
+    display:flex;
+    justify-content:center;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .app{
+    width:100%;
+    max-width:480px;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    padding:18px 16px 28px;
+  }
+  header{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    border-bottom:1px solid var(--line);
+    padding-bottom:12px;
+    margin-bottom:16px;
+  }
+  h1{
+    font-family:'Arial Narrow',-apple-system,Roboto,sans-serif;
+    font-weight:700;
+    font-size:26px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    margin:0;
+  }
+  h1 span{color:var(--blaze);}
+  .gps-badge{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    font-size:11px;
+    color:var(--text-muted);
+    text-transform:uppercase;
+    letter-spacing:0.04em;
+  }
+  .dot{
+    width:8px;height:8px;border-radius:50%;
+    background:var(--text-muted);
+    transition:background .3s;
+  }
+  .dot.good{background:var(--signal-good); box-shadow:0 0 8px var(--signal-good);}
+  .dot.bad{background:var(--signal-bad); box-shadow:0 0 8px var(--signal-bad);}
+  .dot.pulse{animation:pulse 1.4s infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:0.35;}}
+
+  .map-frame{
+    position:relative;
+    background:var(--bg-panel);
+    border:1px solid var(--line);
+    border-radius:4px;
+    overflow:hidden;
+    aspect-ratio:1/1;
+  }
+  .map-frame::before{
+    content:"N";
+    position:absolute;
+    top:8px; left:50%;
+    transform:translateX(-50%);
+    font-family:'Arial Narrow',-apple-system,Roboto,sans-serif;
+    font-size:12px;
+    color:var(--text-muted);
+    letter-spacing:0.1em;
+    z-index:2;
+  }
+  canvas{
+    display:block;
+    width:100%;
+    height:100%;
+  }
+  .empty-state{
+    position:absolute; inset:0;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:6px;
+    color:var(--text-muted);
+    font-size:13px;
+    text-align:center;
+    padding:0 30px;
+  }
+  .empty-state .glyph{
+    width:34px;height:34px;
+    border:2px solid var(--blaze-dim);
+    transform:rotate(45deg);
+    margin-bottom:10px;
+  }
+
+  .stats{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:1px;
+    background:var(--line);
+    border:1px solid var(--line);
+    margin-top:14px;
+    border-radius:4px;
+    overflow:hidden;
+  }
+  .stat{
+    background:var(--bg-panel);
+    padding:10px 8px;
+    text-align:center;
+  }
+  .stat .val{
+    font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    font-size:18px;
+    font-weight:500;
+  }
+  .stat .lbl{
+    font-size:10px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--text-muted);
+    margin-top:2px;
+  }
+
+  .actions{margin-top:16px; display:flex; flex-direction:column; gap:10px;}
+  button.primary{
+    border:none;
+    border-radius:4px;
+    padding:16px;
+    font-family:'Arial Narrow',-apple-system,Roboto,sans-serif;
+    font-weight:600;
+    font-size:18px;
+    letter-spacing:0.05em;
+    text-transform:uppercase;
+    cursor:pointer;
+    background:var(--blaze);
+    color:#1A1204;
+    transition:filter .15s, transform .1s;
+  }
+  button.primary:active{transform:scale(0.98);}
+  button.primary.stop{background:var(--alert); color:#2A0C09;}
+  button.secondary{
+    border:1px solid var(--line);
+    background:transparent;
+    color:var(--text);
+    border-radius:4px;
+    padding:13px;
+    font-family:'Arial Narrow',-apple-system,Roboto,sans-serif;
+    font-weight:600;
+    font-size:16px;
+    letter-spacing:0.04em;
+    text-transform:uppercase;
+    cursor:pointer;
+  }
+  button.secondary:disabled{opacity:0.35; cursor:not-allowed;}
+  button.secondary.active{
+    border-color:var(--alert);
+    color:var(--alert);
+    background:rgba(193,69,58,0.08);
+  }
+
+  .return-panel{
+    margin-top:14px;
+    border:1px solid var(--alert);
+    background:rgba(193,69,58,0.07);
+    border-radius:4px;
+    padding:16px;
+    display:none;
+    text-align:center;
+  }
+  .return-panel.show{display:block;}
+  .return-panel .eyebrow{
+    font-size:11px;
+    letter-spacing:0.1em;
+    text-transform:uppercase;
+    color:var(--alert);
+    margin-bottom:10px;
+  }
+  .compass{
+    width:110px; height:110px;
+    margin:0 auto 10px;
+    border-radius:50%;
+    border:2px solid var(--line);
+    position:relative;
+    background:var(--bg-deep);
+  }
+  .compass .needle{
+    position:absolute;
+    top:50%; left:50%;
+    width:4px; height:44px;
+    background:var(--alert);
+    transform-origin:50% 100%;
+    margin-left:-2px;
+    margin-top:-44px;
+    border-radius:2px 2px 0 0;
+    transition:transform .25s ease-out;
+  }
+  .compass .center-dot{
+    position:absolute; top:50%; left:50%;
+    width:6px; height:6px;
+    background:var(--text-muted);
+    border-radius:50%;
+    transform:translate(-50%,-50%);
+  }
+  .return-panel .bearing-txt{
+    font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+    font-size:13px;
+    color:var(--text-muted);
+    margin-bottom:2px;
+  }
+  .return-panel .dist{
+    font-family:'Arial Narrow',-apple-system,Roboto,sans-serif;
+    font-size:34px;
+    font-weight:700;
+  }
+  .return-panel .waypoint-lbl{
+    font-size:11px;
+    color:var(--text-muted);
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+  }
+  .arrived{
+    color:var(--signal-good) !important;
+  }
+
+  .note{
+    margin-top:16px;
+    font-size:11.5px;
+    line-height:1.5;
+    color:var(--text-muted);
+    border-top:1px solid var(--line);
+    padding-top:12px;
+  }
+  .note b{color:var(--text);}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header>
+    <h1>Back<span>trail</span></h1>
+    <div class="gps-badge"><div id="gpsDot" class="dot"></div><span id="gpsLabel">no fix</span></div>
+  </header>
+
+  <div class="map-frame">
+    <canvas id="mapCanvas"></canvas>
+    <div class="empty-state" id="emptyState">
+      <div class="glyph"></div>
+      <div>Press <b style="color:var(--text)">Start Tracking</b> before you leave the trailhead.<br>Every step gets marked here.</div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="val" id="statDist">0 m</div><div class="lbl">Walked</div></div>
+    <div class="stat"><div class="val" id="statPoints">0</div><div class="lbl">Waypoints</div></div>
+    <div class="stat"><div class="val" id="statAcc">— m</div><div class="lbl">GPS Accuracy</div></div>
+  </div>
+
+  <div class="actions">
+    <button class="primary" id="trackBtn">Start Tracking</button>
+    <button class="secondary" id="returnBtn" disabled>Guide Me Back to Start</button>
+  </div>
+
+  <div class="return-panel" id="returnPanel">
+    <div class="eyebrow">Return Mode</div>
+    <div class="compass"><div class="needle" id="needle"></div><div class="center-dot"></div></div>
+    <div class="bearing-txt" id="bearingTxt">bearing —°</div>
+    <div class="dist" id="returnDist">— m</div>
+    <div class="waypoint-lbl" id="waypointLbl">to last waypoint</div>
+  </div>
+
+  <div class="note" id="noteBox">
+    <b>How it works:</b> your phone's GPS drops a waypoint roughly every 5 meters you walk — no cell signal or map data needed, just open sky. In Return Mode, Backtrail walks you back along that exact chain of points, one at a time, until you're back at your start.
+  </div>
+
+</div>
+
+<script>
+(function(){
+  const trackBtn = document.getElementById('trackBtn');
+  const returnBtn = document.getElementById('returnBtn');
+  const returnPanel = document.getElementById('returnPanel');
+  const emptyState = document.getElementById('emptyState');
+  const gpsDot = document.getElementById('gpsDot');
+  const gpsLabel = document.getElementById('gpsLabel');
+  const statDist = document.getElementById('statDist');
+  const statPoints = document.getElementById('statPoints');
+  const statAcc = document.getElementById('statAcc');
+  const needle = document.getElementById('needle');
+  const bearingTxt = document.getElementById('bearingTxt');
+  const returnDist = document.getElementById('returnDist');
+  const waypointLbl = document.getElementById('waypointLbl');
+  const canvas = document.getElementById('mapCanvas');
+  const ctx = canvas.getContext('2d');
+
+  let watchId = null;
+  let trail = [];          // {lat, lon, t, acc}
+  let totalDist = 0;
+  let tracking = false;
+  let returning = false;
+  let returnIdx = -1;      // index in trail we're currently walking toward
+  let currentPos = null;
+  let deviceHeading = null;
+
+  function resizeCanvas(){
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width * devicePixelRatio;
+    canvas.height = rect.height * devicePixelRatio;
+    draw();
+  }
+  window.addEventListener('resize', resizeCanvas);
+
+  function haversine(lat1, lon1, lat2, lon2){
+    const R = 6371000;
+    const toRad = d => d * Math.PI/180;
+    const dLat = toRad(lat2-lat1), dLon = toRad(lon2-lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(a));
+  }
+  function bearing(lat1, lon1, lat2, lon2){
+    const toRad = d => d*Math.PI/180, toDeg = r => r*180/Math.PI;
+    const y = Math.sin(toRad(lon2-lon1))*Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) - Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(toRad(lon2-lon1));
+    return (toDeg(Math.atan2(y,x))+360)%360;
+  }
+  function toLocalXY(lat, lon, origin){
+    // equirectangular approx, meters
+    const R = 6371000;
+    const toRad = d => d*Math.PI/180;
+    const x = toRad(lon-origin.lon) * Math.cos(toRad(origin.lat)) * R;
+    const y = toRad(lat-origin.lat) * R;
+    return {x, y};
+  }
+
+  function setGpsStatus(state, label){
+    gpsDot.className = 'dot ' + state;
+    gpsLabel.textContent = label;
+  }
+
+  function updateStats(){
+    statDist.textContent = totalDist < 1000 ? Math.round(totalDist)+' m' : (totalDist/1000).toFixed(2)+' km';
+    statPoints.textContent = trail.length;
+  }
+
+  function onPosition(pos){
+    const {latitude, longitude, accuracy} = pos.coords;
+    currentPos = {lat: latitude, lon: longitude, acc: accuracy};
+    statAcc.textContent = Math.round(accuracy)+' m';
+    setGpsStatus(accuracy <= 20 ? 'good pulse' : 'bad pulse', accuracy<=20?'locked':'weak fix');
+
+    if(tracking){
+      const last = trail[trail.length-1];
+      if(!last){
+        trail.push({lat: latitude, lon: longitude, t: Date.now(), acc: accuracy});
+      } else {
+        const d = haversine(last.lat, last.lon, latitude, longitude);
+        if(d >= 5){ // only drop a waypoint every ~5m of real movement
+          totalDist += d;
+          trail.push({lat: latitude, lon: longitude, t: Date.now(), acc: accuracy});
+        }
+      }
+      updateStats();
+      returnBtn.disabled = trail.length < 2;
+      emptyState.style.display = trail.length ? 'none' : 'flex';
+    }
+
+    if(returning) updateReturnGuidance();
+    draw();
+  }
+
+  function onPositionError(err){
+    setGpsStatus('bad', err.code === 1 ? 'permission denied' : 'no signal');
+  }
+
+  function startWatch(){
+    if(!navigator.geolocation){
+      setGpsStatus('bad', 'unsupported');
+      return;
+    }
+    watchId = navigator.geolocation.watchPosition(onPosition, onPositionError, {
+      enableHighAccuracy: true, maximumAge: 1000, timeout: 15000
+    });
+  }
+
+  trackBtn.addEventListener('click', () => {
+    if(!tracking){
+      tracking = true;
+      trail = [];
+      totalDist = 0;
+      returnIdx = -1;
+      returning = false;
+      returnPanel.classList.remove('show');
+      returnBtn.classList.remove('active');
+      returnBtn.textContent = 'Guide Me Back to Start';
+      trackBtn.textContent = 'Stop Tracking';
+      trackBtn.classList.add('stop');
+      updateStats();
+      if(!watchId) startWatch();
+      requestOrientationPermission();
+    } else {
+      tracking = false;
+      trackBtn.textContent = 'Start Tracking';
+      trackBtn.classList.remove('stop');
+    }
+  });
+
+  returnBtn.addEventListener('click', () => {
+    if(trail.length < 2) return;
+    returning = !returning;
+    if(returning){
+      tracking = false;
+      trackBtn.textContent = 'Start Tracking';
+      trackBtn.classList.remove('stop');
+      returnIdx = trail.length - 1; // walk backward from most recent point
+      returnPanel.classList.add('show');
+      returnBtn.classList.add('active');
+      returnBtn.textContent = 'Exit Return Mode';
+      updateReturnGuidance();
+    } else {
+      returnPanel.classList.remove('show');
+      returnBtn.classList.remove('active');
+      returnBtn.textContent = 'Guide Me Back to Start';
+    }
+    draw();
+  });
+
+  function updateReturnGuidance(){
+    if(!currentPos || returnIdx < 0) return;
+    const target = trail[returnIdx];
+    const d = haversine(currentPos.lat, currentPos.lon, target.lat, target.lon);
+
+    if(d < 8){
+      if(returnIdx === 0){
+        waypointLbl.textContent = "you're back at the start";
+        returnDist.textContent = 'Arrived';
+        returnDist.classList.add('arrived');
+        bearingTxt.textContent = '— nice work —';
+        return;
+      }
+      returnIdx--;
+      return updateReturnGuidance();
+    }
+    returnDist.classList.remove('arrived');
+    const brg = bearing(currentPos.lat, currentPos.lon, target.lat, target.lon);
+    const rel = deviceHeading !== null ? (brg - deviceHeading + 360) % 360 : brg;
+    needle.style.transform = `rotate(${rel}deg)`;
+    bearingTxt.textContent = `bearing ${Math.round(brg)}°` + (deviceHeading===null ? '  (hold phone flat to use compass)' : '');
+    returnDist.textContent = d < 1000 ? Math.round(d)+' m' : (d/1000).toFixed(2)+' km';
+    waypointLbl.textContent = returnIdx === 0 ? 'to your start point' : `to waypoint ${returnIdx+1} of ${trail.length}`;
+  }
+
+  function requestOrientationPermission(){
+    if(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function'){
+      DeviceOrientationEvent.requestPermission().then(state => {
+        if(state === 'granted') window.addEventListener('deviceorientation', onOrientation);
+      }).catch(()=>{});
+    } else if('DeviceOrientationEvent' in window){
+      window.addEventListener('deviceorientation', onOrientation);
+    }
+  }
+  function onOrientation(e){
+    if(e.webkitCompassHeading !== undefined){
+      deviceHeading = e.webkitCompassHeading;
+    } else if(e.alpha !== null){
+      deviceHeading = 360 - e.alpha;
+    }
+  }
+
+  function draw(){
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
+    if(trail.length === 0) return;
+
+    const origin = trail[0];
+    const pts = trail.map(p => toLocalXY(p.lat, p.lon, origin));
+    let cur = currentPos ? toLocalXY(currentPos.lat, currentPos.lon, origin) : pts[pts.length-1];
+
+    const allX = pts.map(p=>p.x).concat([cur.x]);
+    const allY = pts.map(p=>p.y).concat([cur.y]);
+    const minX = Math.min(...allX), maxX = Math.max(...allX);
+    const minY = Math.min(...allY), maxY = Math.max(...allY);
+    const spanX = Math.max(maxX-minX, 20);
+    const spanY = Math.max(maxY-minY, 20);
+    const pad = 40 * devicePixelRatio;
+    const scale = Math.min((w-pad*2)/spanX, (h-pad*2)/spanY);
+    const cx = (minX+maxX)/2, cy=(minY+maxY)/2;
+
+    function toScreen(p){
+      // y flips: north (positive lat delta) should go up on screen
+      return {
+        x: w/2 + (p.x - cx) * scale,
+        y: h/2 - (p.y - cy) * scale
+      };
+    }
+
+    // dotted trail line
+    ctx.strokeStyle = 'rgba(226,163,61,0.45)';
+    ctx.lineWidth = 2 * devicePixelRatio;
+    ctx.setLineDash([2*devicePixelRatio, 6*devicePixelRatio]);
+    ctx.beginPath();
+    pts.forEach((p,i)=>{
+      const s = toScreen(p);
+      if(i===0) ctx.moveTo(s.x, s.y); else ctx.lineTo(s.x, s.y);
+    });
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // waypoint blazes (diamonds)
+    pts.forEach((p,i)=>{
+      const s = toScreen(p);
+      const isTarget = returning && i === returnIdx;
+      const size = (isTarget ? 7 : 4) * devicePixelRatio;
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(Math.PI/4);
+      ctx.fillStyle = isTarget ? '#C1453A' : (i===0 ? '#7FB069' : '#E2A33D');
+      ctx.fillRect(-size/2, -size/2, size, size);
+      ctx.restore();
+    });
+
+    // start label ring
+    const startS = toScreen(pts[0]);
+    ctx.beginPath();
+    ctx.arc(startS.x, startS.y, 9*devicePixelRatio, 0, Math.PI*2);
+    ctx.strokeStyle = '#7FB069';
+    ctx.lineWidth = 1.5*devicePixelRatio;
+    ctx.stroke();
+
+    // current position pulse
+    const curS = toScreen(cur);
+    ctx.beginPath();
+    ctx.arc(curS.x, curS.y, 6*devicePixelRatio, 0, Math.PI*2);
+    ctx.fillStyle = '#EDE8D8';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(curS.x, curS.y, 11*devicePixelRatio, 0, Math.PI*2);
+    ctx.strokeStyle = 'rgba(237,232,216,0.5)';
+    ctx.lineWidth = 1.5*devicePixelRatio;
+    ctx.stroke();
+  }
+
+  resizeCanvas();
+  startWatch();
+
+  // Cache this page itself so it opens with zero connection next time.
+  if('serviceWorker' in navigator){
+    const swCode = `
+      self.addEventListener('install', e => self.skipWaiting());
+      self.addEventListener('activate', e => self.clients.claim());
+      self.addEventListener('fetch', e => {
+        e.respondWith(
+          caches.open('backtrail-v1').then(cache =>
+            cache.match(e.request).then(cached => {
+              const fetchPromise = fetch(e.request).then(res => {
+                cache.put(e.request, res.clone());
+                return res;
+              }).catch(() => cached);
+              return cached || fetchPromise;
+            })
+          )
+        );
+      });
+    `;
+    const blob = new Blob([swCode], {type:'application/javascript'});
+    navigator.serviceWorker.register(URL.createObjectURL(blob)).catch(()=>{});
+  }
+})();
+</script>
+</body>
+</html>
