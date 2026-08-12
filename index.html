@@ -305,6 +305,8 @@
 
   <div class="note" id="noteBox">
     <b>How it works:</b> your phone's GPS drops a waypoint roughly every 5 meters you walk — no cell signal or map data needed, just open sky. In Return Mode, Backtrail walks you back along that exact chain of points, one at a time, until you're back at your start.
+    <br><br>
+    <b>Keep this screen open while tracking.</b> This app will try to stop your screen from auto-dimming, but manually pressing the power button pauses tracking completely — that's an Android/iOS rule for web pages, not something this app can override.
   </div>
 
 </div>
@@ -337,6 +339,7 @@
   let returnIdx = -1;      // index in trail we're currently walking toward
   let currentPos = null;
   let deviceHeading = null;
+  let wakeLock = null;
 
   function resizeCanvas(){
     const rect = canvas.parentElement.getBoundingClientRect();
@@ -437,6 +440,26 @@
     });
   }
 
+  async function requestWakeLock(){
+    if(!('wakeLock' in navigator)) return;
+    try{
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    }catch(err){
+      // Wake lock can fail (e.g. low battery mode) — tracking still works, screen just may sleep on its own.
+    }
+  }
+  function releaseWakeLock(){
+    if(wakeLock){ wakeLock.release(); wakeLock = null; }
+  }
+  // If the screen dims/relocks on its own (not a manual power-button press) and this
+  // tab becomes visible again while tracking, re-acquire the lock automatically.
+  document.addEventListener('visibilitychange', () => {
+    if(tracking && document.visibilityState === 'visible' && !wakeLock){
+      requestWakeLock();
+    }
+  });
+
   trackBtn.addEventListener('click', () => {
     if(!tracking){
       tracking = true;
@@ -452,10 +475,21 @@
       updateStats();
       if(!watchId) startWatch();
       requestOrientationPermission();
+      requestWakeLock();
     } else {
       tracking = false;
       trackBtn.textContent = 'Start Tracking';
       trackBtn.classList.remove('stop');
+      releaseWakeLock();
+    }
+  });
+
+  // Warn before an accidental reload/close so tracking isn't silently lost.
+  window.addEventListener('beforeunload', (e) => {
+    if(tracking || returning){
+      e.preventDefault();
+      e.returnValue = '';
+      return '';
     }
   });
 
