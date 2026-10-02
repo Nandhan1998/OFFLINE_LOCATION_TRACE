@@ -295,6 +295,13 @@
     <button class="secondary" id="returnBtn" disabled>Guide Me Back to Start</button>
   </div>
 
+  <div class="actions" style="flex-direction:row; gap:8px; margin-top:10px;">
+    <button class="secondary" id="saveBtn" disabled style="flex:1;">Save Trail</button>
+    <button class="secondary" id="loadBtn" style="flex:1;">Load Trail</button>
+  </div>
+  <input type="file" id="loadFileInput" accept="application/json" style="display:none;">
+  <div id="loadStatus" style="display:none; font-size:11px; text-align:center; padding:6px; margin-top:8px; border-radius:4px; font-family:ui-monospace,monospace;"></div>
+
   <div class="return-panel" id="returnPanel">
     <div class="eyebrow">Return Mode</div>
     <div class="compass"><div class="needle" id="needle"></div><div class="center-dot"></div></div>
@@ -330,6 +337,10 @@
   const ctx = canvas.getContext('2d');
   const noteBox = document.getElementById('noteBox');
   const offlineBadge = document.getElementById('offlineBadge');
+  const saveBtn = document.getElementById('saveBtn');
+  const loadBtn = document.getElementById('loadBtn');
+  const loadFileInput = document.getElementById('loadFileInput');
+  const loadStatus = document.getElementById('loadStatus');
 
   let watchId = null;
   let trail = [];          // {lat, lon, t, acc}
@@ -379,6 +390,7 @@
   function updateStats(){
     statDist.textContent = totalDist < 1000 ? Math.round(totalDist)+' m' : (totalDist/1000).toFixed(2)+' km';
     statPoints.textContent = trail.length;
+    saveBtn.disabled = trail.length < 2;
   }
 
   let poorSignalSince = null;
@@ -627,6 +639,95 @@
     ctx.lineWidth = 1.5*devicePixelRatio;
     ctx.stroke();
   }
+
+  function showLoadStatus(msg, ok){
+    loadStatus.style.display = 'block';
+    loadStatus.textContent = msg;
+    loadStatus.style.border = '1px solid ' + (ok ? '#7FB069' : 'var(--alert)');
+    loadStatus.style.color = ok ? '#7FB069' : 'var(--alert)';
+    loadStatus.style.background = ok ? 'rgba(127,176,105,0.1)' : 'rgba(193,69,58,0.1)';
+  }
+
+  function timestampSlug(){
+    const d = new Date();
+    const pad = n => String(n).padStart(2,'0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+  }
+
+  function downloadBlob(blob, filename){
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  saveBtn.addEventListener('click', () => {
+    if(trail.length < 2) return;
+    const slug = timestampSlug();
+
+    // 1. Trail data — this is the part that actually enables navigation later.
+    const data = {
+      app: 'backtrail',
+      version: 1,
+      savedAt: new Date().toISOString(),
+      totalDistance: totalDist,
+      points: trail.map(p => ({lat: p.lat, lon: p.lon, t: p.t, acc: p.acc}))
+    };
+    downloadBlob(new Blob([JSON.stringify(data, null, 2)], {type:'application/json'}), `backtrail-${slug}.json`);
+
+    // 2. A visual snapshot — nice to keep/share, but NOT usable for navigation on its own.
+    canvas.toBlob(blob => {
+      if(blob) downloadBlob(blob, `backtrail-map-${slug}.png`);
+    }, 'image/png');
+
+    showLoadStatus('Saved trail data (.json) + map image (.png) to your downloads.', true);
+  });
+
+  loadBtn.addEventListener('click', () => loadFileInput.click());
+
+  loadFileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try{
+        const data = JSON.parse(evt.target.result);
+        const points = data.points || data; // tolerate a bare array too
+        if(!Array.isArray(points) || points.length < 2 || !('lat' in points[0])){
+          throw new Error('bad format');
+        }
+        // Stop any live tracking — we're switching to a loaded trail.
+        tracking = false;
+        trackBtn.textContent = 'Start Tracking';
+        trackBtn.classList.remove('stop');
+        releaseWakeLock();
+        returning = false;
+        returnPanel.classList.remove('show');
+        returnBtn.classList.remove('active');
+        returnBtn.textContent = 'Guide Me Back to Start';
+
+        trail = points.map(p => ({lat: p.lat, lon: p.lon, t: p.t || Date.now(), acc: p.acc || 0}));
+        totalDist = data.totalDistance || 0;
+        if(!data.totalDistance){
+          totalDist = 0;
+          for(let i=1;i<trail.length;i++) totalDist += haversine(trail[i-1].lat, trail[i-1].lon, trail[i].lat, trail[i].lon);
+        }
+        updateStats();
+        returnBtn.disabled = false;
+        emptyState.style.display = 'none';
+        showLoadStatus(`Loaded trail with ${trail.length} waypoints. Tap "Guide Me Back to Start" to navigate to its starting point.`, true);
+        draw();
+      }catch(err){
+        showLoadStatus('Could not read that file — make sure it\'s a Backtrail .json trail file.', false);
+      }
+      loadFileInput.value = '';
+    };
+    reader.readAsText(file);
+  });
 
   resizeCanvas();
   startWatch();
